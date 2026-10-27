@@ -1,0 +1,33 @@
+# === Core API ===
+fastapi==0.124.2
+uvicorn[standard]==0.38.0
+python-multipart==0.0.20
+
+# === Validation & Config ===
+pydantic==2.12.5
+pydantic-settings==2.10.1
+python-dotenv==1.0.0
+
+# === Database ===
+SQLAlchemy==2.0.45
+
+# === PDF Extraction ===
+pymupdf==1.26.1
+
+# === Embeddings & LLM ===
+langchain-core==1.6.6
+langchain-google-genai==4.4.0
+google-genai==2.26.0
+
+# === Vector Store ===
+chromadb==0.6.3
+
+# === Lexical Search ===
+rank-bm25==0.2.2
+
+# === Utilities ===
+xxhash==4.0.1
+tqdm==4.70.1
+python-dateutil==2.9.0.post0
+httpx==0.28.1
+requests==2.33.1
