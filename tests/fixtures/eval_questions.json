@@ -1,0 +1,72 @@
+[
+  {
+    "id": "Q001",
+    "question": "Quelles sont les conditions de capital minimum pour les banques ?",
+    "expected_topics": ["capital", "minimum", "banque"],
+    "expected_answer_type": "sourced",
+    "notes": "Doit trouver les articles sur le capital minimum dans la loi 34-03"
+  },
+  {
+    "id": "Q002",
+    "question": "Quelles sont les missions de Bank Al-Maghrib ?",
+    "expected_topics": ["mission", "Bank Al-Maghrib", "banque centrale"],
+    "expected_answer_type": "sourced",
+    "notes": "Article 6 ou équivalent sur les missions de la banque centrale"
+  },
+  {
+    "id": "Q003",
+    "question": "Quelles sont les conditions pour obtenir un agrément bancaire ?",
+    "expected_topics": ["agrément", "banque", "conditions"],
+    "expected_answer_type": "sourced",
+    "notes": "Articles sur l'agrément des établissements de crédit"
+  },
+  {
+    "id": "Q004",
+    "question": "Quels sont les ratios prudentiels applicables aux banques ?",
+    "expected_topics": ["ratio", "prudentiel", "solvabilité"],
+    "expected_answer_type": "sourced",
+    "notes": "Circulaires BAM sur les ratios de solvabilité"
+  },
+  {
+    "id": "Q005",
+    "question": "Quelle est la procédure de liquidation d'un établissement de crédit ?",
+    "expected_topics": ["liquidation", "établissement de crédit"],
+    "expected_answer_type": "sourced",
+    "notes": "Articles sur la liquidation"
+  },
+  {
+    "id": "Q006",
+    "question": "Quelle est la recette du tajine au poulet selon la loi marocaine ?",
+    "expected_topics": [],
+    "expected_answer_type": "insufficient_sources",
+    "notes": "Question hors corpus — doit retourner sources insuffisantes"
+  },
+  {
+    "id": "Q007",
+    "question": "Quel est le taux d'imposition sur les bénéfices des banques en 2099 ?",
+    "expected_topics": [],
+    "expected_answer_type": "insufficient_sources",
+    "notes": "Date future hors corpus — doit retourner sources insuffisantes ou prudence"
+  },
+  {
+    "id": "Q008",
+    "question": "Article 6",
+    "expected_topics": ["article", "6"],
+    "expected_answer_type": "sourced",
+    "notes": "Référence directe à un article — doit déclencher filtre article_number=6"
+  },
+  {
+    "id": "Q009",
+    "question": "Quelles sont les sanctions en cas de non-respect des ratios prudentiels ?",
+    "expected_topics": ["sanction", "ratio", "prudentiel"],
+    "expected_answer_type": "sourced",
+    "notes": "Articles sur les sanctions"
+  },
+  {
+    "id": "Q010",
+    "question": "Quels établissements sont soumis à la supervision de Bank Al-Maghrib ?",
+    "expected_topics": ["supervision", "établissement", "Bank Al-Maghrib"],
+    "expected_answer_type": "sourced",
+    "notes": "Champ d'application des textes de supervision"
+  }
+]
