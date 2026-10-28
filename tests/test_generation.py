@@ -159,11 +159,11 @@ class TestRAGChain:
             assert src["document_id"] == "d1"
 
     def test_insufficient_sources_mode(self, hybrid_search, mock_settings):
-        """T607 — mode sources insuffisantes est possible."""
+        """T607 — question hors périmètre ou hors corpus → réponse appropriée."""
         chain = _chain_with_mock_llm(hybrid_search, mock_settings, "Réponse.")
-        # Tester qu'une question retourne toujours une réponse valide
         result = chain.answer("cuisine tajine marocain poulet citron")
-        assert result["answer_type"] in ("sourced", "insufficient_sources")
+        # out_of_scope, sourced ou insufficient_sources sont tous valides
+        assert result["answer_type"] in ("sourced", "insufficient_sources", "out_of_scope")
         assert result["answer"]
 
     def test_warnings_present(self, hybrid_search, mock_settings):

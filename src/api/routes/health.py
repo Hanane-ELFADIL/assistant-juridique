@@ -1,57 +1,62 @@
 """
-Endpoint de santé — T701.
+Endpoint /health détaillé — T701.
 """
 from __future__ import annotations
-
-from fastapi import APIRouter
-
+from fastapi import APIRouter, Request
 from src.api.schemas import HealthResponse
 
 router = APIRouter()
 
 
-@router.get(
-    "/health",
-    response_model=HealthResponse,
-    summary="Vérification de l'état du service",
-    tags=["System"],
-)
-async def health_check() -> HealthResponse:
-    """
-    Vérifie que l'API est en ligne.
-    Retourne l'état des composants principaux.
-    """
+@router.get("/health", response_model=HealthResponse, tags=["System"])
+async def health_check(request: Request) -> HealthResponse:
+    """État détaillé de tous les composants."""
     components: dict[str, str] = {}
 
-    # Vérification SQLite vectorstore
+    # SQLite vectorstore
     try:
-        from src.vectorstore.sqlite_store import SQLiteVectorStore  # type: ignore
+        from src.vectorstore.sqlite_store import SQLiteVectorStore
         components["vectorstore"] = "ok"
     except ImportError:
         components["vectorstore"] = "not_installed"
 
-    # Vérification PyMuPDF
+    # PyMuPDF
     try:
-        import pymupdf  # type: ignore
+        import pymupdf
         components["pymupdf"] = "ok"
     except ImportError:
         components["pymupdf"] = "not_installed"
 
-    # Vérification LangChain Google
+    # LangChain Google
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore
+        from langchain_google_genai import ChatGoogleGenerativeAI
         components["langchain_google"] = "ok"
     except ImportError:
         components["langchain_google"] = "not_installed"
 
-    # Vérification BM25
+    # BM25
     try:
-        from rank_bm25 import BM25Okapi  # type: ignore
+        from rank_bm25 import BM25Okapi
         components["bm25"] = "ok"
     except ImportError:
         components["bm25"] = "not_installed"
 
-    all_ok = all(v == "ok" for v in components.values())
+    # Chunks indexés (depuis app.state si disponible)
+    rag = getattr(request.app.state, "rag_chain", None)
+    if rag and hasattr(rag, "_search"):
+        try:
+            vs = rag._search._vector_store
+            components["chunks_indexed"] = str(vs.count())
+        except Exception:
+            components["chunks_indexed"] = "unknown"
+
+        try:
+            bm25 = rag._search._bm25
+            components["bm25_size"] = str(bm25.size)
+        except Exception:
+            components["bm25_size"] = "unknown"
+
+    all_ok = all(v in ("ok",) or v.isdigit() for v in components.values())
     return HealthResponse(
         status="ok" if all_ok else "degraded",
         components=components,

@@ -140,7 +140,9 @@ class HybridSearch:
 
         # Fusion RRF (T502)
         if vector_results and bm25_results:
-            fused = reciprocal_rank_fusion(vector_results, bm25_results)
+            # Donner plus de poids au BM25 car le provider local est un hash simple
+            fused = reciprocal_rank_fusion(vector_results, bm25_results,
+                                           weight_a=0.3, weight_b=0.7)
         elif vector_results:
             fused = vector_results
         else:

@@ -69,7 +69,27 @@ async def lifespan(app: FastAPI):
             logger.info("Cache vectoriel chargé : %d chunks.", vector_store.count())
         except Exception as e:
             logger.warning("Cache vectoriel non chargé au démarrage : %s", e)
+
+        # Construire l'index BM25 depuis les chunks en base (T501)
         bm25_index = BM25Index()
+        try:
+            from src.database import get_session_factory, init_db
+            from src.models.chunk import Chunk as ChunkModel
+            init_db()
+            db_session = get_session_factory()()
+            chunks_db = db_session.query(ChunkModel).all()
+            if chunks_db:
+                bm25_index.build(
+                    chunk_ids=[c.chunk_id for c in chunks_db],
+                    texts=[c.text for c in chunks_db],
+                    metadatas=[c.to_metadata_dict() for c in chunks_db],
+                )
+                logger.info("Index BM25 construit : %d chunks.", bm25_index.size)
+            else:
+                logger.warning("Aucun chunk en base — index BM25 vide.")
+            db_session.close()
+        except Exception as e:
+            logger.warning("Impossible de construire l'index BM25 : %s", e)
         hybrid = HybridSearch(vector_store, bm25_index, top_k=settings.retrieval_top_k)
         rag_chain = RAGChain(hybrid, settings)
 
@@ -106,7 +126,7 @@ def create_app() -> FastAPI:
     # CORS — restreint à localhost pour le MVP
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_origins=["http://localhost:3001", "http://127.0.0.1:3001"],
         allow_credentials=False,
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
