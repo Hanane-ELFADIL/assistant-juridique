@@ -1,6 +1,6 @@
 """
 Tests Phase 4 — T400–T408
-Embeddings (mock) + ChromaDB + BM25.
+Embeddings (mock) + SQLiteVectorStore + BM25.
 Pas d'appel à l'API Google : mock EmbeddingProvider utilisé.
 """
 from __future__ import annotations
@@ -17,14 +17,12 @@ class MockEmbeddingProvider:
     """Fournisseur d'embeddings déterministe pour les tests (sans API)."""
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        # Embedding fictif : hash des premiers chars → vecteur de dim 8
         return [self._vec(t) for t in texts]
 
     def embed_query(self, query: str) -> list[float]:
         return self._vec(query)
 
     def _vec(self, text: str) -> list[float]:
-        """Produit un vecteur de 8 floats déterministe depuis un texte."""
         seed = sum(ord(c) for c in text[:20])
         return [(seed + i * 0.1) % 1.0 for i in range(8)]
 
@@ -40,17 +38,12 @@ class MockEmbeddingProvider:
 # --- Fixtures ---
 
 @pytest.fixture
-def chroma_dir(tmp_path):
-    return str(tmp_path / "chroma_test")
-
-
-@pytest.fixture
-def store(chroma_dir):
-    from src.vectorstore.chroma_store import ChromaVectorStore
+def store(tmp_path):
+    from src.vectorstore.sqlite_store import SQLiteVectorStore
     provider = MockEmbeddingProvider()
-    return ChromaVectorStore(
+    return SQLiteVectorStore(
         provider=provider,
-        persist_dir=chroma_dir,
+        persist_dir=str(tmp_path / "vector_test"),
         collection_name="test_collection",
     )
 
@@ -84,10 +77,10 @@ class TestEmbeddingInterface:
     def test_google_provider_interface(self):
         """T401 — GoogleEmbeddingProvider implémente l'interface."""
         from src.embeddings.provider import GoogleEmbeddingProvider, EmbeddingProvider
-        p = GoogleEmbeddingProvider("models/text-embedding-004", "fake-key")
+        p = GoogleEmbeddingProvider("models/gemini-embedding-001", "fake-key")
         assert isinstance(p, EmbeddingProvider)
-        assert p.model_name == "models/text-embedding-004"
-        assert p.embedding_dimension == 768
+        assert p.model_name == "models/gemini-embedding-001"
+        assert p.embedding_dimension == 3072
 
 
 # --- T403/T404 : ChromaDB ---

@@ -56,13 +56,19 @@ async def lifespan(app: FastAPI):
     # Initialisation du pipeline RAG (si possible)
     try:
         from src.embeddings.provider import get_embedding_provider
-        from src.vectorstore.chroma_store import ChromaVectorStore
+        from src.vectorstore.sqlite_store import SQLiteVectorStore
         from src.retrieval.bm25_index import BM25Index
         from src.retrieval.hybrid_search import HybridSearch
         from src.generation.rag_chain import RAGChain
 
         provider = get_embedding_provider(settings)
-        vector_store = ChromaVectorStore(provider)
+        vector_store = SQLiteVectorStore(provider)
+        # Précharger le cache vectoriel au démarrage (évite le délai à la première requête)
+        try:
+            vector_store._load_cache()
+            logger.info("Cache vectoriel chargé : %d chunks.", vector_store.count())
+        except Exception as e:
+            logger.warning("Cache vectoriel non chargé au démarrage : %s", e)
         bm25_index = BM25Index()
         hybrid = HybridSearch(vector_store, bm25_index, top_k=settings.retrieval_top_k)
         rag_chain = RAGChain(hybrid, settings)

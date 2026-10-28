@@ -47,7 +47,7 @@ class RAGChain:
         self._llm = None
 
     def _get_llm(self):
-        """Initialise le LLM à la première utilisation (T600)."""
+        """Initialise le LLM via le SDK google-genai natif (T600)."""
         if self._llm is not None:
             return self._llm
 
@@ -58,20 +58,15 @@ class RAGChain:
             )
 
         try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
+            import google.genai as genai
         except ImportError:
             raise ImportError(
-                "langchain-google-genai requis. "
-                "Exécutez : pip install langchain-google-genai"
+                "google-genai requis. "
+                "Exécutez : pip install google-genai"
             )
 
-        self._llm = ChatGoogleGenerativeAI(
-            model=self._settings.gemini_model,
-            google_api_key=self._settings.google_api_key,
-            temperature=0.0,  # Déterminisme maximal pour réponses juridiques
-            max_output_tokens=2048,
-        )
-        logger.info("LLM initialisé : %s", self._settings.gemini_model)
+        self._llm = genai.Client(api_key=self._settings.google_api_key)
+        logger.info("LLM initialisé (google-genai) : %s", self._settings.gemini_model)
         return self._llm
 
     def answer(
@@ -140,21 +135,29 @@ class RAGChain:
         ]
         prompt = build_rag_prompt(question, context_for_prompt)
 
-        # 5. Génération LLM
+        # 5. Génération LLM via SDK google-genai natif
         try:
-            llm = self._get_llm()
-            from langchain_core.messages import HumanMessage, SystemMessage
-            messages = [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=prompt),
-            ]
-            response = llm.invoke(messages)
-            answer_text = response.content
+            client = self._get_llm()
+            full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
+            response = client.models.generate_content(
+                model=self._settings.gemini_model,
+                contents=full_prompt,
+            )
+            answer_text = response.text
         except LLMNotConfiguredError as e:
             return _error_response(str(e), question)
         except Exception as e:
             logger.error("Erreur LLM : %s", e)
-            return _error_response(f"Erreur lors de la génération : {e}", question)
+            # Si le LLM échoue mais la recherche a trouvé des résultats,
+            # retourner les passages avec un message explicatif
+            err_str = str(e)
+            if "503" in err_str or "UNAVAILABLE" in err_str:
+                answer_text = (
+                    "⚠️ Le service de génération est temporairement indisponible. "
+                    "Voici les passages les plus pertinents trouvés dans les documents :"
+                )
+            else:
+                return _error_response(f"Erreur lors de la génération : {e}", question)
 
         # 6. Construction des citations vérifiables (T604, T605)
         citations = []

@@ -23,12 +23,12 @@ async def health_check() -> HealthResponse:
     """
     components: dict[str, str] = {}
 
-    # Vérification ChromaDB
+    # Vérification SQLite vectorstore
     try:
-        import chromadb  # type: ignore
-        components["chromadb"] = "ok"
+        from src.vectorstore.sqlite_store import SQLiteVectorStore  # type: ignore
+        components["vectorstore"] = "ok"
     except ImportError:
-        components["chromadb"] = "not_installed"
+        components["vectorstore"] = "not_installed"
 
     # Vérification PyMuPDF
     try:

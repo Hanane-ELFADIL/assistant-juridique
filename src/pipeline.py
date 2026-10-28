@@ -152,7 +152,8 @@ def cmd_index_document(document_id: str, db, settings) -> int:
     # Indexation vectorielle
     print("  Indexation vectorielle...")
     provider = get_embedding_provider(settings)
-    vector_store = ChromaVectorStore(provider)
+    from src.vectorstore.sqlite_store import SQLiteVectorStore
+    vector_store = SQLiteVectorStore(provider)
 
     # Supprime les chunks existants de l'index
     vector_store.delete_document_chunks(doc.id)
@@ -182,8 +183,8 @@ def cmd_index_document(document_id: str, db, settings) -> int:
         for c in chunk_objects
     ]
 
-    indexed = vector_store.upsert_chunks(chunk_ids, texts, metadatas)
-    print(f"    {indexed} chunks indexés dans ChromaDB.")
+    indexed = vector_store.upsert_chunks(chunk_ids, texts, metadatas, batch_size=10000)
+    print(f"    {indexed} chunks indexés dans le vectorstore.")
 
     print(f"  ✓ Document {doc.title!r} indexé avec succès.")
     return 0
@@ -248,11 +249,12 @@ def cmd_status(args) -> int:
     """Affiche l'état de l'index vectoriel."""
     from src.config import get_settings
     from src.embeddings.provider import get_embedding_provider
-    from src.vectorstore.chroma_store import ChromaVectorStore
+    from src.vectorstore.sqlite_store import SQLiteVectorStore
 
     settings = get_settings()
+    settings.ensure_dirs()
     provider = get_embedding_provider(settings)
-    store = ChromaVectorStore(provider)
+    store = SQLiteVectorStore(provider)
 
     try:
         info = store.get_index_info()
