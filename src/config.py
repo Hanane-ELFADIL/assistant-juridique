@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     vector_db_dir: str = Field(default="./data/vector_db")
     vector_collection_name: str = Field(default="bam_legal_chunks")
 
+    # === Ollama (LLM + embeddings locaux) ===
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    ollama_llm_model: str = Field(default="llama3.2:3b")
+    ollama_embed_model: str = Field(default="nomic-embed-text")
+    llm_mode: str = Field(default="ollama", description="'ollama' ou 'google'")
+
     # === Chemins ===
     data_raw_dir: str = Field(default="./data/raw")
     data_processed_dir: str = Field(default="./data/processed")
