@@ -111,7 +111,7 @@ class TestHealthEndpoint:
         with TestClient(app) as client:
             resp = client.get("/health")
         components = resp.json()["components"]
-        for key in ("vectorstore", "pymupdf", "langchain_google", "bm25"):
+        for key in ("chromadb", "pymupdf", "langchain_google", "bm25"):
             assert key in components
 
     def test_health_all_ok_when_installed(self):
@@ -120,8 +120,9 @@ class TestHealthEndpoint:
         with TestClient(app) as client:
             resp = client.get("/health")
         data = resp.json()
+        # PyMuPDF et chromadb sont installés dans cet environnement
         assert data["components"]["pymupdf"] == "ok"
-        assert data["components"]["vectorstore"] == "ok"
+        assert data["components"]["chromadb"] == "ok"
         assert data["components"]["bm25"] == "ok"
 
 

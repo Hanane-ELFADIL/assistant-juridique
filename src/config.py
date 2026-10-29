@@ -10,17 +10,12 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Racine du projet = parent du répertoire src/
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_ENV_FILE = _PROJECT_ROOT / ".env"
-
 
 class Settings(BaseSettings):
     """Paramètres de l'application chargés depuis .env ou l'environnement."""
 
     model_config = SettingsConfigDict(
-        # Chemin absolu vers .env à la racine du projet
-        env_file=str(_ENV_FILE),
+        env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -43,15 +38,6 @@ class Settings(BaseSettings):
     # === Vectorstore ===
     chroma_persist_dir: str = Field(default="./data/chroma_db")
     chroma_collection_name: str = Field(default="bam_legal_chunks")
-    # SQLite vectorstore (backend actif pour le MVP)
-    vector_db_dir: str = Field(default="./data/vector_db")
-    vector_collection_name: str = Field(default="bam_legal_chunks")
-
-    # === Ollama (LLM + embeddings locaux) ===
-    ollama_base_url: str = Field(default="http://localhost:11434")
-    ollama_llm_model: str = Field(default="llama3.2:3b")
-    ollama_embed_model: str = Field(default="nomic-embed-text")
-    llm_mode: str = Field(default="ollama", description="'ollama' ou 'google'")
 
     # === Chemins ===
     data_raw_dir: str = Field(default="./data/raw")

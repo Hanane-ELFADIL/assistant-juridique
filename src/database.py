@@ -56,8 +56,11 @@ def get_session_factory():
 
 def init_db() -> None:
     """Crée toutes les tables si elles n'existent pas."""
-    # Import des modèles pour que SQLAlchemy les connaisse
     from src.models import document, chunk  # noqa: F401
+    try:
+        from src.models import user  # noqa: F401
+    except Exception:
+        pass
     Base.metadata.create_all(bind=get_engine())
 
 

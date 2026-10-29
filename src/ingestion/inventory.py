@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from src.config import get_settings
 from src.models.document import Document, VerificationStatus
-from src.models.chunk import Chunk
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +75,7 @@ def generate_inventory_report(db: Session) -> dict[str, Any]:
             "last_verified_at": doc.last_verified_at.isoformat() if doc.last_verified_at else None,
             "source_url": doc.source_url,
             "warnings": warnings,
-            "chunks_count": db.query(Chunk).filter(Chunk.document_id == doc.id).count(),
+            "chunks_count": len(doc.chunks) if doc.chunks else 0,
         })
 
     return {

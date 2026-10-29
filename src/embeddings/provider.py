@@ -1,160 +1,97 @@
 """
-Interface embeddings — supporte Ollama (local) et Google API.
-Ollama recommandé : nomic-embed-text (vraie sémantique, 768 dims).
+Interface interchangeable pour les embeddings — T400, T401.
+Supporte Google Embeddings API (par défaut) et peut être étendu.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
-import math
 from abc import ABC, abstractmethod
+from typing import Protocol
 
 logger = logging.getLogger(__name__)
-EMBEDDING_INTERFACE_VERSION = "2.0"
+
+# Version de l'interface — à incrémenter si le schéma de l'index change (T407)
+EMBEDDING_INTERFACE_VERSION = "1.0"
 
 
 class EmbeddingProvider(ABC):
-    @abstractmethod
-    def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
-    @abstractmethod
-    def embed_query(self, query: str) -> list[float]: ...
-    @property
-    @abstractmethod
-    def model_name(self) -> str: ...
-    @property
-    @abstractmethod
-    def embedding_dimension(self) -> int: ...
+    """Interface abstraite pour les fournisseurs d'embeddings (T400)."""
 
-
-class OllamaEmbeddingProvider(EmbeddingProvider):
-    """
-    Embeddings via Ollama local — nomic-embed-text (768 dims).
-    Vraie sémantique, aucune clé API, fonctionne hors-ligne.
-    Requires: ollama pull nomic-embed-text
-    """
-    def __init__(self, model: str = "nomic-embed-text",
-                 base_url: str = "http://localhost:11434"):
-        self._model = model
-        self._base_url = base_url
-
-    def _embed(self, texts: list[str]) -> list[list[float]]:
-        import urllib.request, json
-        results = []
-        for text in texts:
-            body = json.dumps({"model": self._model, "prompt": text}).encode()
-            req = urllib.request.Request(
-                f"{self._base_url}/api/embeddings",
-                data=body, headers={"Content-Type": "application/json"}
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=30) as r:
-                    data = json.loads(r.read())
-                    results.append(data["embedding"])
-            except Exception as e:
-                logger.error("Ollama embedding error: %s", e)
-                raise RuntimeError(
-                    f"Ollama non disponible ({e}). "
-                    "Vérifiez que Ollama tourne : ollama serve"
-                ) from e
-        return results
-
+    @abstractmethod
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        if not texts:
-            return []
-        # Traitement par batch de 10 pour éviter les timeouts
-        results = []
-        for i in range(0, len(texts), 10):
-            batch = texts[i:i+10]
-            results.extend(self._embed(batch))
-            if i % 500 == 0 and i > 0:
-                logger.info("Embeddings Ollama : %d/%d", i, len(texts))
-        return results
+        """
+        Génère les embeddings pour une liste de textes.
+        
+        Args:
+            texts: Liste de textes à vectoriser.
+        
+        Returns:
+            Liste de vecteurs (liste de floats).
+        """
+        ...
 
+    @abstractmethod
     def embed_query(self, query: str) -> list[float]:
-        return self._embed([query])[0]
+        """
+        Génère l'embedding pour une requête utilisateur.
+        (Certains modèles distinguent document et requête.)
+        """
+        ...
 
     @property
+    @abstractmethod
     def model_name(self) -> str:
-        return f"ollama/{self._model}"
+        """Nom du modèle d'embeddings utilisé."""
+        ...
 
     @property
+    @abstractmethod
     def embedding_dimension(self) -> int:
-        return 768  # nomic-embed-text
-
-
-class LocalHashEmbeddingProvider(EmbeddingProvider):
-    """
-    Fallback local — hash MD5, dim 64. Aucune installation.
-    Qualité faible. Utiliser uniquement si Ollama non disponible.
-    """
-    DIM = 64
-
-    def _hash_text(self, text: str) -> list[float]:
-        vec = [0.0] * self.DIM
-        tokens = text.lower().split()
-        if not tokens:
-            return vec
-        for token in tokens:
-            h = int(hashlib.md5(token.encode()).hexdigest(), 16)
-            idx = h % self.DIM
-            sign = 1.0 if (h >> 64) % 2 == 0 else -1.0
-            vec[idx] += sign
-        norm = math.sqrt(sum(x * x for x in vec))
-        if norm > 0:
-            vec = [x / norm for x in vec]
-        return vec
-
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        return [self._hash_text(t) for t in texts]
-
-    def embed_query(self, query: str) -> list[float]:
-        return self._hash_text(query)
-
-    @property
-    def model_name(self) -> str:
-        return "hash-local-64"
-
-    @property
-    def embedding_dimension(self) -> int:
-        return self.DIM
-
-
-# Alias
-TFIDFEmbeddingProvider = LocalHashEmbeddingProvider
+        """Dimension des vecteurs produits."""
+        ...
 
 
 class GoogleEmbeddingProvider(EmbeddingProvider):
-    """Embeddings Google (gemini-embedding-001, 3072 dims)."""
-    def __init__(self, model_name: str = "models/gemini-embedding-001", api_key: str = ""):
+    """
+    Fournisseur d'embeddings Google via LangChain (T401).
+    Modèle : text-embedding-004 (multilingue FR/AR).
+    """
+
+    def __init__(self, model_name: str = "models/text-embedding-004", api_key: str = ""):
         self._model_name = model_name
         self._api_key = api_key
-        self._client = None
+        self._embeddings = None
 
-    def _get_client(self):
-        if self._client is None:
-            import google.genai as genai
-            self._client = genai.Client(api_key=self._api_key)
-        return self._client
+    def _get_embeddings(self):
+        if self._embeddings is None:
+            try:
+                from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            except ImportError:
+                raise ImportError(
+                    "langchain-google-genai requis. "
+                    "Exécutez : pip install langchain-google-genai"
+                )
+            self._embeddings = GoogleGenerativeAIEmbeddings(
+                model=self._model_name,
+                google_api_key=self._api_key or None,
+                task_type="retrieval_document",
+            )
+        return self._embeddings
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Génère les embeddings pour un corpus de documents."""
         if not texts:
             return []
-        import google.genai.types as types
-        client = self._get_client()
-        result = client.models.embed_content(
-            model=self._model_name, contents=texts,
-            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
-        )
-        return [e.values for e in result.embeddings]
+        embeddings_obj = self._get_embeddings()
+        # Utilise task_type retrieval_document pour l'indexation
+        embeddings_obj.task_type = "retrieval_document"
+        return embeddings_obj.embed_documents(texts)
 
     def embed_query(self, query: str) -> list[float]:
-        import google.genai.types as types
-        client = self._get_client()
-        result = client.models.embed_content(
-            model=self._model_name, contents=[query],
-            config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
-        )
-        return result.embeddings[0].values
+        """Génère l'embedding pour une requête (task_type différent)."""
+        embeddings_obj = self._get_embeddings()
+        embeddings_obj.task_type = "retrieval_query"
+        return embeddings_obj.embed_query(query)
 
     @property
     def model_name(self) -> str:
@@ -162,31 +99,26 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
 
     @property
     def embedding_dimension(self) -> int:
-        return 3072
+        return 768  # text-embedding-004 dimension
 
 
 def get_embedding_provider(settings=None) -> EmbeddingProvider:
     """
-    Factory selon EMBEDDING_MODEL dans .env :
-      ollama          → OllamaEmbeddingProvider (recommandé)
-      local           → LocalHashEmbeddingProvider (fallback)
-      models/gemini-* → GoogleEmbeddingProvider
+    Factory : retourne le fournisseur d'embeddings configuré.
+    Configurable via EMBEDDING_MODEL dans .env.
     """
     if settings is None:
         from src.config import get_settings
         settings = get_settings()
 
     model = settings.embedding_model
+    api_key = settings.google_api_key
 
-    if model == "ollama":
-        ollama_url = getattr(settings, 'ollama_base_url', 'http://localhost:11434')
-        ollama_model = getattr(settings, 'ollama_embed_model', 'nomic-embed-text')
-        logger.info("Provider : Ollama (%s @ %s)", ollama_model, ollama_url)
-        return OllamaEmbeddingProvider(model=ollama_model, base_url=ollama_url)
+    if not api_key:
+        logger.warning(
+            "GOOGLE_API_KEY non définie — les embeddings échoueront. "
+            "Définissez GOOGLE_API_KEY dans votre fichier .env."
+        )
 
-    if model == "local" or not settings.google_api_key:
-        logger.info("Provider : hash local (fallback)")
-        return LocalHashEmbeddingProvider()
-
-    logger.info("Provider : Google (%s)", model)
-    return GoogleEmbeddingProvider(model_name=model, api_key=settings.google_api_key)
+    logger.info("Fournisseur d'embeddings : Google (%s)", model)
+    return GoogleEmbeddingProvider(model_name=model, api_key=api_key)

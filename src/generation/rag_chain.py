@@ -1,13 +1,10 @@
 """
-Pipeline RAG — LLM Ollama (local) ou Google, avec streaming.
+Pipeline RAG complet — T600–T609.
 """
 from __future__ import annotations
 
-import json
 import logging
-import time
-import urllib.request
-from typing import Any, Generator, Optional
+from typing import Any, Optional
 
 from src.generation.prompts import (
     CONTRADICTION_WARNING,
@@ -17,231 +14,238 @@ from src.generation.prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Seuil de score minimal pour considérer un passage pertinent
+# RRF scores sont typiquement entre 0.01 et 0.02 — on accepte tout passage trouvé
 MIN_RELEVANCE_SCORE = 0.0
+# Nombre minimal de passages pour éviter le mode "sources insuffisantes"
 MIN_PASSAGES_FOR_ANSWER = 1
 
-_OUT_OF_SCOPE = [
-    "recette", "cuisine", "tajine", "couscous", "météo", "temps qu'il",
-    "sport", "foot", "film", "musique", "politique", "ignore tes instructions",
-    "ignore your instructions", "oublie tes instructions", "prompt système",
-    "system prompt", "donne ton prompt", "forget your instructions",
-    "act as", "jailbreak", "droit du travail", "code de commerce",
-    "impôts", "fiscal", "immobilier", "autres pays",
-]
 
-
-class LLMError(Exception):
+class LLMNotConfiguredError(Exception):
+    """Levée si GOOGLE_API_KEY n'est pas configurée."""
     pass
 
 
 class RAGChain:
+    """
+    Pipeline RAG : recherche → construction du prompt → génération → citation.
+    
+    Interface configurable pour le LLM (T600).
+    """
 
-    def __init__(self, hybrid_search, settings=None):
+    def __init__(
+        self,
+        hybrid_search,
+        settings=None,
+    ):
         self._search = hybrid_search
         if settings is None:
             from src.config import get_settings
             settings = get_settings()
         self._settings = settings
+        self._llm = None
 
-    def _is_out_of_scope(self, q: str) -> bool:
-        ql = q.lower()
-        return any(p in ql for p in _OUT_OF_SCOPE)
+    def _get_llm(self):
+        """Initialise le LLM à la première utilisation (T600)."""
+        if self._llm is not None:
+            return self._llm
 
-    def _generate_ollama(self, prompt: str) -> str:
-        """Génération via Ollama local."""
-        ollama_url = getattr(self._settings, 'ollama_base_url', 'http://localhost:11434')
-        model = getattr(self._settings, 'ollama_llm_model', 'llama3.2:3b')
+        if not self._settings.google_api_key:
+            raise LLMNotConfiguredError(
+                "GOOGLE_API_KEY non définie. "
+                "Ajoutez-la dans votre fichier .env."
+            )
 
-        body = json.dumps({
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.1, "num_predict": 1024},
-        }).encode()
-        req = urllib.request.Request(
-            f"{ollama_url}/api/generate",
-            data=body, headers={"Content-Type": "application/json"}
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+        except ImportError:
+            raise ImportError(
+                "langchain-google-genai requis. "
+                "Exécutez : pip install langchain-google-genai"
+            )
+
+        self._llm = ChatGoogleGenerativeAI(
+            model=self._settings.gemini_model,
+            google_api_key=self._settings.google_api_key,
+            temperature=0.0,  # Déterminisme maximal pour réponses juridiques
+            max_output_tokens=2048,
         )
-        with urllib.request.urlopen(req, timeout=120) as r:
-            data = json.loads(r.read())
-            return data.get("response", "")
+        logger.info("LLM initialisé : %s", self._settings.gemini_model)
+        return self._llm
 
-    def _generate_google(self, prompt: str) -> str:
-        """Génération via Google (fallback)."""
-        import google.genai as genai
-        client = genai.Client(api_key=self._settings.google_api_key)
-        model = self._settings.gemini_model
-        for attempt in range(2):
-            try:
-                r = client.models.generate_content(model=model, contents=prompt)
-                return r.text
-            except Exception as e:
-                if attempt == 0:
-                    time.sleep(3)
-                    continue
-                raise LLMError(str(e)) from e
-        raise LLMError("LLM indisponible")
-
-    def _generate(self, prompt: str) -> str:
-        """Essaie Ollama d'abord, puis Google en fallback."""
-        llm_mode = getattr(self._settings, 'llm_mode', 'ollama')
-
-        if llm_mode == "ollama":
-            try:
-                return self._generate_ollama(prompt)
-            except Exception as e:
-                logger.warning("Ollama indisponible (%s), fallback Google.", e)
-                if self._settings.google_api_key:
-                    return self._generate_google(prompt)
-                raise LLMError(f"Ollama indisponible : {e}") from e
-        else:
-            try:
-                return self._generate_google(prompt)
-            except Exception as e:
-                raise LLMError(str(e)) from e
-
-    def answer(self, question: str, n_context_chunks: Optional[int] = None,
-               filters: Optional[dict] = None) -> dict[str, Any]:
+    def answer(
+        self,
+        question: str,
+        n_context_chunks: Optional[int] = None,
+        filters: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        """
+        Répond à une question via RAG.
+        
+        Args:
+            question: Question en langage naturel.
+            n_context_chunks: Nombre de chunks de contexte (défaut: config).
+            filters: Filtres de recherche.
+        
+        Returns:
+            Dict structuré : answer, sources, citations, warnings, metadata.
+        """
+        n = n_context_chunks or self._settings.max_context_chunks
         question = question.strip()
 
         if not question:
-            return _err("Question vide.", question)
+            return _error_response("Question vide.", question)
+
+        # Vérification longueur
         if len(question) > self._settings.max_query_length:
-            return _err(f"Question trop longue (max {self._settings.max_query_length}).", question)
-        if self._is_out_of_scope(question):
-            return {
-                "answer": (
-                    "Je suis uniquement en mesure de répondre aux questions relatives "
-                    "aux textes législatifs et réglementaires de Bank Al-Maghrib.\n\n"
-                    "Cette question est hors de mon périmètre."
-                ),
-                "answer_type": "out_of_scope",
-                "question": question,
-                "sources": [], "citations": [], "warnings": [],
-                "search_method": "", "total_retrieved": 0, "relevant_used": 0,
-            }
+            return _error_response(
+                f"Question trop longue (max {self._settings.max_query_length} caractères).",
+                question,
+            )
 
-        n = n_context_chunks or self._settings.max_context_chunks
-        search = self._search.search(query=question, n_results=n, filters=filters)
-        all_results = search.get("results", [])
-        relevant = [r for r in all_results if r.get("score", 0) >= MIN_RELEVANCE_SCORE]
-        relevant = _deduplicate(relevant)
+        # 1. Recherche hybride
+        logger.info("Recherche pour : %r", question[:80])
+        search_result = self._search.search(
+            query=question,
+            n_results=n,
+            filters=filters,
+        )
+        all_results = search_result.get("results", [])
 
+        # 2. Filtrage par score minimal
+        relevant = [
+            r for r in all_results
+            if r.get("score", 0) >= MIN_RELEVANCE_SCORE
+        ]
+
+        # 3. Mode sources insuffisantes (T607)
         if len(relevant) < MIN_PASSAGES_FOR_ANSWER:
+            logger.info("Sources insuffisantes pour : %r", question[:80])
             return {
                 "answer": INSUFFICIENT_SOURCES_MESSAGE,
                 "answer_type": "insufficient_sources",
                 "question": question,
-                "sources": [], "citations": [],
-                "warnings": search.get("warnings", []),
-                "search_method": search.get("search_method", ""),
-                "total_retrieved": len(all_results), "relevant_used": 0,
+                "sources": [],
+                "citations": [],
+                "warnings": search_result.get("warnings", []),
+                "search_method": search_result.get("search_method", ""),
+                "total_retrieved": len(all_results),
             }
 
-        context = [{"text": r["text"], "citation": r["citation"], "chunk_id": r["chunk_id"]}
-                   for r in relevant]
-        prompt = f"{SYSTEM_PROMPT}\n\n{build_rag_prompt(question, context)}"
+        # 4. Construction du prompt (T601, T602)
+        context_for_prompt = [
+            {"text": r["text"], "citation": r["citation"], "chunk_id": r["chunk_id"]}
+            for r in relevant
+        ]
+        prompt = build_rag_prompt(question, context_for_prompt)
 
+        # 5. Génération LLM
         try:
-            answer_text = self._generate(prompt)
-            answer_type = "sourced"
-        except LLMError as e:
-            logger.error("LLM error: %s", e)
-            answer_text = (
-                "⚠️ **Service de génération indisponible.**\n\n"
-                "Voici les passages pertinents trouvés :\n\n" +
-                "\n\n---\n\n".join(
-                    f"**[{i+1}] {r['citation'].get('article','')}** "
-                    f"({r['citation'].get('title','')[:40]})\n\n{r['text'][:500]}"
-                    for i, r in enumerate(relevant[:5])
-                )
-            )
-            answer_type = "degraded"
+            llm = self._get_llm()
+            from langchain_core.messages import HumanMessage, SystemMessage
+            messages = [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=prompt),
+            ]
+            response = llm.invoke(messages)
+            answer_text = response.content
+        except LLMNotConfiguredError as e:
+            return _error_response(str(e), question)
         except Exception as e:
-            logger.error("Unexpected error: %s", e)
-            return _err(str(e), question)
+            logger.error("Erreur LLM : %s", e)
+            return _error_response(f"Erreur lors de la génération : {e}", question)
 
+        # 6. Construction des citations vérifiables (T604, T605)
         citations = []
-        seen = set()
+        seen_chunks = set()
         for r in relevant:
-            if r["chunk_id"] not in seen:
-                seen.add(r["chunk_id"])
-                cit = r["citation"]
-                if cit.get("title") or cit.get("article"):
-                    citations.append({
-                        "chunk_id": r["chunk_id"],
-                        "citation": cit,
-                        "excerpt": r["text"][:500] + ("…" if len(r["text"]) > 500 else ""),
-                        "score": r["score"],
-                        "rank": r["rank"],
-                    })
+            if r["chunk_id"] not in seen_chunks:
+                seen_chunks.add(r["chunk_id"])
+                citations.append({
+                    "chunk_id": r["chunk_id"],
+                    "citation": r["citation"],
+                    "excerpt": r["text"][:300] + ("…" if len(r["text"]) > 300 else ""),
+                    "score": r["score"],
+                    "rank": r["rank"],
+                })
 
-        warnings = list(search.get("warnings", []))
+        # 7. Détection de contradictions (T608)
+        warnings = list(search_result.get("warnings", []))
         if _detect_contradictions(relevant):
             warnings.append(CONTRADICTION_WARNING)
 
+        logger.info(
+            "Réponse générée : %d sources, %d warnings.",
+            len(citations),
+            len(warnings),
+        )
+
         return {
             "answer": answer_text,
-            "answer_type": answer_type,
+            "answer_type": "sourced",
             "question": question,
-            "sources": _sources(relevant),
+            "sources": _build_sources_list(relevant),
             "citations": citations,
             "warnings": warnings,
-            "search_method": search.get("search_method", ""),
+            "search_method": search_result.get("search_method", ""),
             "total_retrieved": len(all_results),
             "relevant_used": len(relevant),
         }
 
 
-def _deduplicate(results: list[dict], max_per_article: int = 2) -> list[dict]:
-    seen_art: dict = {}
-    seen_txt: list = []
-    out = []
-    for r in results:
-        art = r.get("metadata", {}).get("article_number", "")
-        if art and seen_art.get(art, 0) >= max_per_article:
-            continue
-        t = r["text"][:150]
-        if any(_overlap(t, s) > 0.75 for s in seen_txt):
-            continue
-        if art:
-            seen_art[art] = seen_art.get(art, 0) + 1
-        seen_txt.append(t)
-        out.append(r)
-    return out
+def _error_response(message: str, question: str) -> dict[str, Any]:
+    return {
+        "answer": message,
+        "answer_type": "error",
+        "question": question,
+        "sources": [],
+        "citations": [],
+        "warnings": [message],
+        "search_method": "",
+        "total_retrieved": 0,
+    }
 
 
-def _overlap(a: str, b: str) -> float:
-    ta, tb = set(a.lower().split()), set(b.lower().split())
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / max(len(ta), len(tb))
-
-
-def _err(msg: str, q: str) -> dict:
-    return {"answer": msg, "answer_type": "error", "question": q,
-            "sources": [], "citations": [], "warnings": [msg],
-            "search_method": "", "total_retrieved": 0, "relevant_used": 0}
-
-
-def _sources(results: list[dict]) -> list[dict]:
-    seen = set()
-    out = []
+def _build_sources_list(results: list[dict]) -> list[dict]:
+    """
+    Déduplique et structure la liste des sources (T605, T606).
+    N'inclut que les champs réellement disponibles — rien n'est inventé.
+    """
+    seen_docs = set()
+    sources = []
     for r in results:
         meta = r.get("metadata", {})
-        did = meta.get("document_id", "")
-        if did and did not in seen:
-            seen.add(did)
-            src = {"document_id": did}
-            for f, l in [("doc_title","title"),("doc_type","type"),
-                          ("doc_number","number"),("doc_date","date"),
-                          ("source_url","url")]:
-                if meta.get(f):
-                    src[l] = meta[f]
-            out.append(src)
-    return out
+        doc_id = meta.get("document_id", "")
+        if doc_id and doc_id not in seen_docs:
+            seen_docs.add(doc_id)
+            source = {"document_id": doc_id}
+            # N'ajoute que les champs non vides
+            for field, label in [
+                ("doc_title", "title"),
+                ("doc_type", "type"),
+                ("doc_number", "number"),
+                ("doc_date", "date"),
+                ("doc_language", "language"),
+                ("source_url", "url"),
+            ]:
+                val = meta.get(field)
+                if val:
+                    source[label] = val
+            sources.append(source)
+    return sources
 
 
 def _detect_contradictions(results: list[dict]) -> bool:
-    return len({r.get("metadata", {}).get("document_id")
-                for r in results if r.get("metadata", {}).get("document_id")}) > 1
+    """
+    Détection heuristique simple de contradictions entre documents (T608).
+    Si plusieurs documents différents sont cités, il peut y avoir divergence.
+    """
+    doc_ids = set()
+    for r in results:
+        meta = r.get("metadata", {})
+        doc_id = meta.get("document_id")
+        if doc_id:
+            doc_ids.add(doc_id)
+    # Heuristique : si plus d'un document source, avertir
+    return len(doc_ids) > 1

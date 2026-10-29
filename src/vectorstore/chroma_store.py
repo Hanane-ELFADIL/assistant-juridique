@@ -81,6 +81,15 @@ class ChromaVectorStore:
         """
         Indexe les chunks avec upsert (T405, T406).
         Un chunk déjà présent est mis à jour — pas de doublon.
+        
+        Args:
+            chunk_ids: IDs uniques des chunks.
+            texts: Textes à vectoriser.
+            metadatas: Métadonnées associées.
+            batch_size: Taille des lots pour l'API d'embeddings.
+        
+        Returns:
+            Nombre de chunks indexés/mis à jour.
         """
         if not chunk_ids:
             return 0
@@ -89,20 +98,10 @@ class ChromaVectorStore:
         total = len(chunk_ids)
         indexed = 0
 
-        # Pré-calcul de TOUS les embeddings en un seul appel (beaucoup plus rapide)
-        logger.info("Génération des embeddings pour %d chunks...", total)
-        try:
-            all_embeddings = self._provider.embed_texts(texts)
-            logger.info("Embeddings générés.")
-        except Exception as e:
-            logger.error("Erreur génération embeddings : %s", e)
-            raise
-
         for start in range(0, total, batch_size):
             batch_ids = chunk_ids[start:start + batch_size]
             batch_texts = texts[start:start + batch_size]
             batch_metas = metadatas[start:start + batch_size]
-            batch_embeddings = all_embeddings[start:start + batch_size]
 
             # Nettoyage des métadonnées (ChromaDB n'accepte que str/int/float/bool)
             clean_metas = []
@@ -118,33 +117,24 @@ class ChromaVectorStore:
                 clean_metas.append(clean)
 
             try:
+                embeddings = self._provider.embed_texts(batch_texts)
                 collection.upsert(
                     ids=batch_ids,
-                    embeddings=batch_embeddings,
+                    embeddings=embeddings,
                     documents=batch_texts,
                     metadatas=clean_metas,
                 )
                 indexed += len(batch_ids)
-                if start % 5000 == 0:
-                    logger.info("Indexé %d/%d chunks.", indexed, total)
+                logger.info(
+                    "Lot %d–%d indexé (%d/%d).",
+                    start + 1,
+                    start + len(batch_ids),
+                    indexed,
+                    total,
+                )
             except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    import re, time
-                    delay_match = re.search(r"retry in (\d+)", err_str)
-                    wait = int(delay_match.group(1)) + 2 if delay_match else 65
-                    logger.warning("Quota API. Attente %ds...", wait)
-                    time.sleep(wait)
-                    collection.upsert(
-                        ids=batch_ids,
-                        embeddings=batch_embeddings,
-                        documents=batch_texts,
-                        metadatas=clean_metas,
-                    )
-                    indexed += len(batch_ids)
-                else:
-                    logger.error("Erreur lot %d : %s", start, e)
-                    raise
+                logger.error("Erreur lors de l'indexation du lot %d : %s", start, e)
+                raise
 
         return indexed
 

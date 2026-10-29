@@ -159,11 +159,11 @@ class TestRAGChain:
             assert src["document_id"] == "d1"
 
     def test_insufficient_sources_mode(self, hybrid_search, mock_settings):
-        """T607 — question hors périmètre ou hors corpus → réponse appropriée."""
+        """T607 — mode sources insuffisantes est possible."""
         chain = _chain_with_mock_llm(hybrid_search, mock_settings, "Réponse.")
+        # Tester qu'une question retourne toujours une réponse valide
         result = chain.answer("cuisine tajine marocain poulet citron")
-        # out_of_scope, sourced ou insufficient_sources sont tous valides
-        assert result["answer_type"] in ("sourced", "insufficient_sources", "out_of_scope")
+        assert result["answer_type"] in ("sourced", "insufficient_sources")
         assert result["answer"]
 
     def test_warnings_present(self, hybrid_search, mock_settings):
@@ -187,14 +187,13 @@ class TestRAGChain:
         assert result["answer_type"] == "error"
 
     def test_no_api_key_gives_error(self, hybrid_search):
-        """T600 — sans clé API ni Ollama → réponse dégradée ou error."""
+        """T600 — sans clé API → error ou insufficient_sources."""
         from src.generation.rag_chain import RAGChain
         from src.config import Settings
-        settings = Settings(google_api_key="", database_url="sqlite:///:memory:",
-                            llm_mode="google")  # force google pour tester sans clé
+        settings = Settings(google_api_key="", database_url="sqlite:///:memory:")
         chain = RAGChain(hybrid_search, settings)
         result = chain.answer("capital banque")
-        assert result["answer_type"] in ("error", "insufficient_sources", "degraded")
+        assert result["answer_type"] in ("error", "insufficient_sources")
 
     def test_excerpt_in_citations(self, hybrid_search, mock_settings):
         """T609 — extrait présent dans les citations (distingue citation vs résumé)."""
