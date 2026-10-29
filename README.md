@@ -23,7 +23,7 @@ Les réponses sont fondées **uniquement** sur les documents indexés — chaque
 
 ```powershell
 # 1. Cloner le dépôt
-git clone <url-du-repo>
+git clone https://github.com/Hanane-ELFADIL/assistant-juridique.git
 cd asistant-juridique
 
 # 2. Créer et activer l'environnement virtuel Python
