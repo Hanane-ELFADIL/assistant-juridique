@@ -1,187 +1,156 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { marked } from 'marked'
+
+// Configure marked pour un rendu sécurisé
+marked.setOptions({ breaks: true, gfm: true })
 
 const EXAMPLES = [
-  "Quelles sont les conditions de capital minimum pour les banques ?",
-  "Quelles sont les missions de Bank Al-Maghrib ?",
-  "Quelles sont les conditions d'obtention d'un agrément bancaire ?",
-  "Quels sont les ratios prudentiels applicables aux établissements de crédit ?",
-  "Que dit la loi bancaire sur la protection des déposants ?",
-  "Quelles sont les sanctions prévues en cas de non-respect de la réglementation ?",
+  { label: "Capital minimum", q: "Quelles sont les conditions de capital minimum pour les banques ?" },
+  { label: "Agrément bancaire", q: "Quelles sont les conditions d'obtention d'un agrément bancaire ?" },
+  { label: "Missions BAM", q: "Quelles sont les missions de Bank Al-Maghrib ?" },
+  { label: "Ratios prudentiels", q: "Quels sont les ratios prudentiels applicables aux établissements de crédit ?" },
+  { label: "Protection déposants", q: "Que dit la loi bancaire sur la protection des déposants ?" },
+  { label: "Sanctions", q: "Quelles sont les sanctions en cas de non-respect de la réglementation bancaire ?" },
 ]
 
 export default function App() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [apiStatus, setApiStatus] = useState('checking')
+  const [status, setStatus] = useState('checking')
   const bottomRef = useRef(null)
-  const textareaRef = useRef(null)
+  const taRef = useRef(null)
 
-  // Vérification de l'API au démarrage
   useEffect(() => {
     fetch('/health').then(r => r.json())
-      .then(d => setApiStatus(d.status === 'ok' ? 'ok' : 'degraded'))
-      .catch(() => setApiStatus('error'))
+      .then(d => setStatus(d.status === 'ok' ? 'ok' : 'degraded'))
+      .catch(() => setStatus('error'))
   }, [])
 
-  // Scroll automatique
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
-  // Auto-resize textarea
-  function handleInput(e) {
-    setInput(e.target.value)
-    const el = e.target
+  const autoResize = (el) => {
+    if (!el) return
     el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 180) + 'px'
+    el.style.height = Math.min(el.scrollHeight, 160) + 'px'
   }
 
-  // Envoi via Enter (Shift+Enter = nouvelle ligne)
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendQuestion(input)
-    }
-  }
-
-  const sendQuestion = useCallback(async (question) => {
+  const send = useCallback(async (question) => {
     const q = question.trim()
     if (!q || loading) return
-
     setInput('')
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-    }
-
-    // Ajoute le message utilisateur
-    setMessages(prev => [...prev, { role: 'user', content: q }])
+    if (taRef.current) taRef.current.style.height = 'auto'
+    setMessages(p => [...p, { role: 'user', content: q }])
     setLoading(true)
-
     try {
-      const resp = await fetch('/api/chat', {
+      const r = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: q }),
       })
-
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}))
-        throw new Error(err.detail || `Erreur ${resp.status}`)
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}))
+        throw new Error(e.detail || `Erreur ${r.status}`)
       }
-
-      const data = await resp.json()
-      setMessages(prev => [...prev, { role: 'assistant', ...data }])
-    } catch (err) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        answer_type: 'error',
-        answer: err.message || 'Erreur de connexion au serveur.',
-        citations: [], sources: [], warnings: [],
-        question: q,
+      const data = await r.json()
+      setMessages(p => [...p, { role: 'assistant', ...data }])
+    } catch (e) {
+      setMessages(p => [...p, {
+        role: 'assistant', answer_type: 'error',
+        answer: e.message || 'Erreur de connexion.',
+        citations: [], sources: [], warnings: [], question: q,
       }])
     } finally {
       setLoading(false)
     }
   }, [loading])
 
-  function newChat() {
-    setMessages([])
-    setInput('')
-  }
-
-  const statusLabel = apiStatus === 'ok' ? 'En ligne' : apiStatus === 'degraded' ? 'Dégradé' : 'Hors ligne'
+  const statusMap = { ok: ['ok', 'En ligne'], degraded: ['', 'Dégradé'], checking: ['checking', 'Connexion…'], error: ['error', 'Hors ligne'] }
+  const [dotCls, statusTxt] = statusMap[status] || ['', status]
 
   return (
     <div className="app">
-      {/* Sidebar */}
-      <aside className="sidebar" aria-label="Navigation">
-        <div className="sidebar-logo">
-          <span className="logo-icon">🏛️</span>
-          <div>
-            <h2>Assistant Juridique</h2>
-            <p>Bank Al-Maghrib</p>
+
+      {/* ── SIDEBAR ── */}
+      <aside className="sidebar">
+        <div className="sidebar-inner">
+          <div className="sidebar-logo">
+            <div className="logo-badge">⚖️</div>
+            <div className="logo-text">
+              <h2>Assistant Juridique</h2>
+              <p>Bank Al-Maghrib</p>
+            </div>
           </div>
-        </div>
 
-        <button className="btn-new-chat" onClick={newChat} aria-label="Nouvelle conversation">
-          ✏️ Nouvelle conversation
-        </button>
+          <button className="btn-new" onClick={() => setMessages([])} aria-label="Nouvelle conversation">
+            ✏️ Nouvelle conversation
+          </button>
 
-        <div className="sidebar-section">Questions fréquentes</div>
-        <nav className="example-list" aria-label="Exemples de questions">
-          {EXAMPLES.map(q => (
-            <button key={q} className="example-item" onClick={() => sendQuestion(q)}>
-              {q}
-            </button>
-          ))}
-        </nav>
+          <div className="sidebar-section">Questions fréquentes</div>
+          <nav className="example-list">
+            {EXAMPLES.map(({ label, q }) => (
+              <button key={q} className="example-btn" onClick={() => send(q)}>
+                <strong style={{display:'block',fontSize:'.72rem',marginBottom:'2px',color:'rgba(255,255,255,.5)'}}>{label}</strong>
+                {q}
+              </button>
+            ))}
+          </nav>
 
-        <div className="sidebar-footer">
-          <p>
-            Outil de recherche documentaire — pas un avis juridique.<br />
-            <a href="https://www.bkam.ma" target="_blank" rel="noopener noreferrer">bkam.ma</a>
-          </p>
+          <div className="sidebar-divider" />
+          <div className="sidebar-footer">
+            <p>Outil de recherche documentaire — pas un avis juridique.<br />
+            <a href="https://www.bkam.ma" target="_blank" rel="noopener noreferrer">bkam.ma ↗</a></p>
+          </div>
         </div>
       </aside>
 
-      {/* Zone de chat */}
+      {/* ── CHAT AREA ── */}
       <main className="chat-area">
         <header className="chat-header">
-          <h1>Recherche dans les textes législatifs BAM</h1>
-          <div className="status-pill" aria-live="polite">
-            <span className={`status-dot ${apiStatus}`} aria-hidden="true" />
-            {statusLabel}
+          <div className="chat-header-title">
+            <h1>Recherche dans les textes législatifs</h1>
+            <span className="header-badge">BAM</span>
+          </div>
+          <div className="status-pill">
+            <span className={`dot ${dotCls}`} />
+            {statusTxt}
           </div>
         </header>
 
-        {/* Messages */}
-        <div className="messages" role="log" aria-live="polite" aria-label="Conversation">
-          {messages.length === 0 ? (
-            <EmptyState onSelect={sendQuestion} />
-          ) : (
-            messages.map((msg, i) => (
-              msg.role === 'user'
-                ? <UserMessage key={i} content={msg.content} />
-                : <AssistantMessage key={i} data={msg} />
-            ))
-          )}
-
+        <div className="messages" role="log" aria-live="polite">
+          {messages.length === 0
+            ? <EmptyState onSelect={send} />
+            : messages.map((m, i) =>
+                m.role === 'user'
+                  ? <UserBubble key={i} content={m.content} />
+                  : <BotBubble key={i} data={m} />
+              )
+          }
           {loading && (
-            <div className="message">
-              <div className="avatar assistant" aria-hidden="true">⚖️</div>
-              <div className="bubble assistant" role="status" aria-label="Recherche en cours">
-                <div className="typing">
-                  <span /><span /><span />
-                </div>
+            <div className="msg-row">
+              <div className="avatar bot" aria-hidden="true">⚖️</div>
+              <div className="bubble bot" role="status">
+                <div className="typing"><span/><span/><span/></div>
               </div>
             </div>
           )}
-          <div ref={bottomRef} aria-hidden="true" />
+          <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
         <div className="input-area">
-          <div className="input-wrap">
-            <label htmlFor="chat-input" className="sr-only">Votre question</label>
+          <div className="input-box">
+            <label htmlFor="qi" className="sr-only">Question</label>
             <textarea
-              id="chat-input"
-              ref={textareaRef}
-              className="chat-textarea"
-              rows={1}
-              value={input}
-              onChange={handleInput}
-              onKeyDown={handleKeyDown}
-              placeholder="Posez une question sur les textes de Bank Al-Maghrib…"
+              id="qi" ref={taRef} className="chat-ta" rows={1}
+              value={input} placeholder="Posez votre question juridique…"
               disabled={loading}
-              aria-label="Zone de saisie de question"
+              onChange={e => { setInput(e.target.value); autoResize(e.target) }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) } }}
             />
-            <button
-              className="btn-send"
-              onClick={() => sendQuestion(input)}
-              disabled={loading || !input.trim()}
-              aria-label="Envoyer"
-            >
+            <button className="send-btn" onClick={() => send(input)}
+              disabled={loading || !input.trim()} aria-label="Envoyer">
               ↑
             </button>
           </div>
@@ -192,21 +161,18 @@ export default function App() {
   )
 }
 
-/* ===== Composants ===== */
-
+/* ── Empty state ── */
 function EmptyState({ onSelect }) {
   return (
     <div className="empty-state">
-      <div className="empty-logo">⚖️</div>
-      <h2>Assistant Juridique BAM</h2>
-      <p>
-        Posez vos questions sur les textes législatifs et réglementaires
-        de Bank Al-Maghrib. Chaque réponse est sourcée et vérifiable.
-      </p>
-      <div className="quick-examples">
-        {EXAMPLES.slice(0, 3).map(q => (
-          <button key={q} className="quick-btn" onClick={() => onSelect(q)}>
-            {q.length > 55 ? q.slice(0, 55) + '…' : q}
+      <div className="empty-icon">⚖️</div>
+      <h2>Bienvenue</h2>
+      <p>Posez vos questions sur les textes législatifs et réglementaires de Bank Al-Maghrib. Chaque réponse est sourcée et vérifiable.</p>
+      <div className="quick-grid">
+        {EXAMPLES.slice(0, 4).map(({ label, q }) => (
+          <button key={q} className="quick-card" onClick={() => onSelect(q)}>
+            <strong>{label}</strong>
+            {q.length > 60 ? q.slice(0, 60) + '…' : q}
           </button>
         ))}
       </div>
@@ -214,50 +180,55 @@ function EmptyState({ onSelect }) {
   )
 }
 
-function UserMessage({ content }) {
+/* ── User bubble ── */
+function UserBubble({ content }) {
   return (
-    <div className="message user" role="article" aria-label="Votre question">
-      <div className="avatar user" aria-hidden="true">Vous</div>
+    <div className="msg-row user">
+      <div className="avatar user">Vous</div>
       <div className="bubble user">{content}</div>
     </div>
   )
 }
 
-function AssistantMessage({ data }) {
+/* ── Bot bubble ── */
+function BotBubble({ data }) {
   const { answer, answer_type, citations, warnings, search_method, question } = data
-  const [showSources, setShowSources] = useState(false)
+  const [open, setOpen] = useState(false)
 
-  const banner = getBanner(answer_type)
+  const banner = {
+    degraded: { cls: 'warn', icon: '⚠️', txt: 'Service LLM temporairement indisponible — passages bruts affichés' },
+    error:    { cls: 'err',  icon: '✗',   txt: 'Une erreur est survenue' },
+    out_of_scope: { cls: 'info', icon: 'ℹ️', txt: 'Question hors périmètre (textes bancaires BAM uniquement)' },
+    insufficient_sources: { cls: 'warn', icon: '🔍', txt: 'Aucun passage suffisant trouvé dans les documents indexés' },
+  }[answer_type]
+
+  // Rendu Markdown sécurisé
+  const html = marked.parse(answer || '')
 
   return (
-    <div className="message" role="article" aria-label="Réponse de l'assistant">
-      <div className="avatar assistant" aria-hidden="true">⚖️</div>
-      <div className="bubble assistant">
+    <div className="msg-row">
+      <div className="avatar bot">⚖️</div>
+      <div className="bubble bot">
         {banner && (
-          <div className={`answer-banner ${banner.cls}`} role="alert">
-            {banner.icon} {banner.text}
+          <div className={`banner ${banner.cls}`} role="alert">
+            {banner.icon}&nbsp; {banner.txt}
           </div>
         )}
 
-        <div className="answer-text">{answer}</div>
+        {/* Réponse rendue en Markdown */}
+        <div className="md-body" dangerouslySetInnerHTML={{ __html: html }} />
 
-        {citations && citations.length > 0 && (
+        {/* Bouton sources */}
+        {citations?.length > 0 && (
           <>
-            <button
-              className="sources-toggle"
-              onClick={() => setShowSources(s => !s)}
-              aria-expanded={showSources}
-            >
-              📄 {showSources ? 'Masquer' : 'Voir'} les sources
-              <span className="count">{citations.length}</span>
-              {search_method && <span style={{fontSize:'0.72rem',marginLeft:'auto',opacity:0.7}}>{search_method}</span>}
+            <button className="sources-btn" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+              📄 {open ? 'Masquer' : 'Voir'} les sources
+              <span className="src-count">{citations.length}</span>
+              {search_method && <span style={{marginLeft:'auto',opacity:.6,fontSize:'.68rem'}}>{search_method}</span>}
             </button>
-
-            {showSources && (
+            {open && (
               <div className="sources-panel">
-                {citations.map((c, i) => (
-                  <SourceCard key={c.chunk_id} cit={c} index={i + 1} highlight={question} />
-                ))}
+                {citations.map((c, i) => <SrcCard key={c.chunk_id} c={c} i={i+1} q={question} />)}
               </div>
             )}
           </>
@@ -267,54 +238,39 @@ function AssistantMessage({ data }) {
   )
 }
 
-function SourceCard({ cit, index, highlight }) {
-  const { citation: ref, excerpt, score } = cit
-  const quality = score >= 0.55 ? {cls:'quality-high', label:'● Pertinence élevée'}
-                : score >= 0.35 ? {cls:'quality-mid',  label:'● Pertinence moyenne'}
-                :                 {cls:'quality-low',  label:'● Pertinence faible'}
-
-  const docLabel = [ref.title, ref.type && ref.number ? `${ref.type} n° ${ref.number}` : ref.type].filter(Boolean).join(' · ')
+/* ── Source card ── */
+function SrcCard({ c, i, q }) {
+  const { citation: ref, excerpt, score } = c
+  const [cls, lbl] = score >= .55 ? ['q-high','● Pertinence élevée']
+                   : score >= .35 ? ['q-mid', '● Pertinence moyenne']
+                   :                ['q-low', '● Pertinence faible']
+  const doc = [ref.title, ref.type && ref.number ? `${ref.type} n°${ref.number}` : ref.type].filter(Boolean).join(' · ')
 
   return (
-    <div className="source-card" role="article" aria-label={`Source ${index}`}>
-      <div className="source-header">
-        <span className="source-num">[{index}]</span>
-        {ref.article && <span className="source-article">{ref.article}</span>}
-        <span className="source-doc">
+    <div className="src-card">
+      <div className="src-head">
+        <span className="src-num">[{i}]</span>
+        {ref.article && <span className="src-art">{ref.article}</span>}
+        <span className="src-doc">
           {ref.url
-            ? <a href={ref.url} target="_blank" rel="noopener noreferrer" title="Ouvrir la source">{docLabel || 'Document BAM'}</a>
-            : (docLabel || 'Document BAM')}
+            ? <a href={ref.url} target="_blank" rel="noopener noreferrer">{doc || 'Document BAM'}</a>
+            : (doc || 'Document BAM')}
         </span>
-        {ref.page && <span className="source-page">· p.{ref.page}</span>}
+        {ref.page && <span className="src-page">· p.{ref.page}</span>}
       </div>
       {excerpt && (
-        <div className="source-excerpt"
-          dangerouslySetInnerHTML={{ __html: `« ${hl(excerpt, highlight)} »` }} />
+        <div className="src-excerpt" dangerouslySetInnerHTML={{ __html: `« ${hl(excerpt, q)} »` }} />
       )}
-      <div className={`quality-badge ${quality.cls}`}>{quality.label}</div>
+      <div className={`src-quality ${cls}`}>{lbl}</div>
     </div>
   )
 }
 
-/* ===== Helpers ===== */
-
-function getBanner(type) {
-  switch (type) {
-    case 'degraded': return { cls: 'banner-warning', icon: '⚠️', text: 'Service de génération temporairement indisponible — passages bruts affichés' }
-    case 'error': return { cls: 'banner-error', icon: '✗', text: 'Une erreur est survenue' }
-    case 'out_of_scope': return { cls: 'banner-oos', icon: 'ℹ️', text: 'Question hors périmètre' }
-    case 'insufficient_sources': return { cls: 'banner-warning', icon: '🔍', text: 'Aucun passage suffisant trouvé dans les documents indexés' }
-    default: return null
-  }
-}
-
-function hl(text, query) {
-  const safe = esc(text)
-  if (!query) return safe
-  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 2)
-  if (!words.length) return safe
-  const re = new RegExp(`(${words.map(escRe).join('|')})`, 'gi')
-  return safe.replace(re, '<mark>$1</mark>')
+function hl(txt, q) {
+  const s = esc(txt)
+  if (!q) return s
+  const words = q.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+  if (!words.length) return s
+  return s.replace(new RegExp(`(${words.map(r => r.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')})`, 'gi'), '<mark>$1</mark>')
 }
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
-function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') }
