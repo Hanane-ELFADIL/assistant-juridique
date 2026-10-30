@@ -149,7 +149,20 @@ class RAGChain:
                 HumanMessage(content=prompt),
             ]
             response = llm.invoke(messages)
-            answer_text = response.content
+            # Extraire le texte — certains modèles retournent une liste de blocs
+            content = response.content
+            if isinstance(content, list):
+                # Cas Gemma/thinking models : liste de {'type': 'text', 'text': '...'}
+                parts = [
+                    p.get("text", "") if isinstance(p, dict) else str(p)
+                    for p in content
+                    if not (isinstance(p, dict) and p.get("type") == "thinking")
+                ]
+                answer_text = "\n".join(parts).strip()
+            else:
+                answer_text = str(content)
+            if not answer_text:
+                raise ValueError("Réponse vide du LLM")
         except LLMNotConfiguredError as e:
             return _error_response(str(e), question)
         except Exception as e:
